@@ -4,3 +4,20 @@
 @media(max-width:450px){.compass{display:none}.seed-slot{width:76px}.seed-icon{display:none}.inventory{gap:8px}.seed-slot strong{font-size:11px}.seed-slot small{font-size:8px}.seed-slot{padding-left:15px}.intro-card h2{font-size:43px}.intro-card h3{font-size:15px}.intro-card .eyebrow{font-size:8px}.intro-card p{font-size:11px}.intro-pills span{font-size:9px}.intro .primary{width:100%}.benefits{bottom:77px}.mission{max-width:calc(100vw - 136px)}}
 @media(max-height:510px) and (min-width:600px){.profile{top:max(9px,env(safe-area-inset-top));left:max(16px,env(safe-area-inset-left));transform:scale(.84);transform-origin:top left}.top-actions{top:9px;right:max(14px,env(safe-area-inset-right))}.mission{top:89px;max-width:240px}.mission h1{font-size:12px;margin:4px 0}.mission p{font-size:9px}.mission .eyebrow{font-size:7px}.checklist{display:none}.map-panel{top:63px;width:89px;right:max(14px,env(safe-area-inset-right))}.environment{font-size:7px}.inventory{bottom:11px}.seed-slot{height:43px;width:91px}.seed-slot strong{font-size:10px}.seed-slot small{font-size:8px}.benefits{bottom:12px;font-size:7px;left:max(16px,env(safe-area-inset-left))}.benefits b{font-size:10px}.joystick{width:88px;height:88px;bottom:62px;left:max(24px,env(safe-area-inset-left))}.joystick i{width:35px;height:35px}#touch-sprint{bottom:158px;left:max(40px,env(safe-area-inset-left))}#touch-e{bottom:61px;right:max(22px,env(safe-area-inset-right))}#touch-jump{bottom:135px;right:max(28px,env(safe-area-inset-right))}.prompt{bottom:116px;padding:8px 11px;max-width:45vw}.prompt strong{font-size:10px}.prompt small{font-size:8px}.notice{bottom:76px;font-size:9px;max-width:49vw}.instructions{bottom:10px;font-size:8px}.hazard{top:51px;font-size:9px}.intro-card h2{font-size:40px;margin:10px 0}.intro-card h3{font-size:15px;margin:12px 0}.intro-card p{font-size:11px;max-width:460px}.intro-pills{margin:8px 0}.intro-card .version{margin-top:9px}.screen{padding:14px 32px}.intro-card .disclaimer{display:none}.menu-card{padding:16px;max-height:100%;overflow:auto}.menu-card h2{margin:8px 0;font-size:23px}.compass{top:12px}.results{margin:10px 0}}
 @media(prefers-reduced-motion:reduce){.vital>i{transition:none}}
+
+/* vNext community-economy HUD */
+#economy-open{display:inline-flex;align-items:center;gap:5px}
+#economy-open .coin-mini{display:inline-grid;place-items:center;min-width:23px;height:18px;padding:0 5px;border-radius:9px;background:#d7bc73;color:#1b2b24;font-size:8px;font-weight:800}
+.benefits{flex-wrap:wrap;max-width:430px}
+@media(max-width:760px){
+  .top-actions{gap:4px}.top-actions .icon-button{font-size:10px;padding:6px 7px}
+  #economy-open{max-width:78px;line-height:1.05}
+  #economy-open .coin-mini{min-width:19px;height:16px;padding:0 3px}
+  .benefits{max-width:270px;row-gap:5px}
+}
+@media(max-width:430px){
+  #economy-open{font-size:0;width:42px;padding:6px}
+  #economy-open:before{content:'฿';font-size:14px;color:#e8d18c}
+  #economy-open .coin-mini{font-size:7px}
+  .benefits{max-width:220px;gap:7px}
+}

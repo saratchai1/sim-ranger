@@ -1,12 +1,13 @@
 import * as THREE from 'three'
 import { RangerAvatar } from './character.js'
 import { CAMP, CACHES, FOREST, LOGS, MUD, SITES, SPECIES, STATION, TRASH, terrainHeight, floorHeight, tide, isStorm, random } from './simulation.js'
+import { MATERIALS, RESOURCE_NODES, WORKSHOP, MARKET } from './economy.js'
 
 // Original procedural scene. No downloaded images, models or runtime CDN calls.
 export class RangerWorld {
   constructor(host, appearance) {
     this.appearance = appearance; this.avatar = null
-    this.host = host; this.resources = new Set(); this.plants = []; this.debris = []
+    this.host = host; this.resources = new Set(); this.plants = []; this.debris = []; this.economyMarkers = []
     this.cameraObstacles = []; this.cameraRay = new THREE.Raycaster(); this.shadowTime = -1
     this.scene = new THREE.Scene(); this.scene.background = new THREE.Color('#b9cabb')
     this.scene.fog = new THREE.FogExp2('#b9cabb', 0.021)
@@ -38,7 +39,7 @@ export class RangerWorld {
       dark: this.mat('#273d37'), metal: this.mat('#9da9a2', { metalness: 0.45, roughness: 0.43 }),
       soil: this.mat('#503a27'), gold: this.mat('#dca952'), teal: this.mat('#86d9bc'),
     }
-    this.buildTerrain(); this.buildForest(); this.buildCamp(); this.buildCourse(); this.buildCharacter(); this.buildAtmosphere()
+    this.buildTerrain(); this.buildForest(); this.buildCamp(); this.buildEconomy(); this.buildCourse(); this.buildCharacter(); this.buildAtmosphere()
     this.scene.updateMatrixWorld(true)
     this.camera.position.set(0, 3.5, 16); this.lookTarget = new THREE.Vector3(0, 2, 11)
     this.resizeObserver = new ResizeObserver(() => this.resize()); this.resizeObserver.observe(host); this.resize()
@@ -61,6 +62,7 @@ export class RangerWorld {
       temp.position.set(...e.p); temp.scale.set(...e.s); temp.rotation.set(...(e.r || [0,0,0])); temp.updateMatrix()
       mesh.setMatrixAt(i, temp.matrix); if (e.c) mesh.setColorAt(i, new THREE.Color(e.c))
     })
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
     mesh.castShadow = true; mesh.receiveShadow = true; mesh.computeBoundingSphere(); this.scene.add(mesh); return mesh
   }
   buildTerrain() {
@@ -95,27 +97,76 @@ export class RangerWorld {
     this.instances(this.keep(new THREE.DodecahedronGeometry(1,1)),stoneEntries,this.mat('#7c8270'))
   }
   buildForest() {
-    const trunks=[], roots=[], crowns=[], branches=[]
+    const trunks=[], upperTrunks=[], roots=[], pneumatophores=[], branches=[], crowns=[]
+    const barkPalette=['#66503b','#979487','#705744']
+    const leafPalettes=[
+      ['#315f3c','#477846','#5d8b52'],
+      ['#6f8d5c','#829b68','#a2ad78'],
+      ['#396b4c','#4d7c55','#668d5d'],
+    ]
     for (const t of FOREST) {
-      const y=terrainHeight(t.x,t.z), h=5.8*t.scale, a=t.phase
-      trunks.push({p:[t.x,y+h*.5,t.z],s:[.24*t.scale,h,.24*t.scale],r:[.04*Math.sin(a),a,.035]})
-      for(let i=0;i<6;i++) {
-        const angle=a+i*1.047, r=.65*t.scale
-        const start=new THREE.Vector3(t.x+Math.cos(angle)*r,y+.04,t.z+Math.sin(angle)*r)
-        const end=new THREE.Vector3(t.x,y+1.1*t.scale,t.z), v=end.clone().sub(start)
-        const q=new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0),v.clone().normalize())
-        roots.push({p:start.add(end).multiplyScalar(.5).toArray(),s:[.055*t.scale,v.length(),.055*t.scale],r:new THREE.Euler().setFromQuaternion(q).toArray().slice(0,3)})
+      const kind=t.kind%3, y=terrainHeight(t.x,t.z), h=(kind===1?6.5:kind===2?5.6:6.1)*t.scale, a=t.phase
+      const bark=barkPalette[kind], leaves=leafPalettes[kind]
+      trunks.push({p:[t.x,y+h*.34,t.z],s:[(kind===2?.31:.24)*t.scale,h*.68,(kind===2?.31:.24)*t.scale],r:[.018*Math.sin(a),a,.02],c:bark})
+      upperTrunks.push({p:[t.x+.05*Math.sin(a),y+h*.72,t.z+.05*Math.cos(a)],s:[.15*t.scale,h*.34,.15*t.scale],r:[.025*Math.cos(a),a+.12,.02],c:bark})
+
+      if(kind===0) {
+        // Rhizophora: arching stilt roots from trunk into the intertidal mud.
+        for(let i=0;i<9;i++) {
+          const angle=a+i*Math.PI*2/9, radius=(.72+(i%3)*.13)*t.scale
+          const start=new THREE.Vector3(t.x+Math.cos(angle)*radius,y+.02,t.z+Math.sin(angle)*radius)
+          const end=new THREE.Vector3(t.x+Math.cos(angle)*.08,y+(1.05+(i%2)*.32)*t.scale,t.z+Math.sin(angle)*.08)
+          const v=end.clone().sub(start), q=new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0),v.clone().normalize())
+          roots.push({p:start.add(end).multiplyScalar(.5).toArray(),s:[.048*t.scale,v.length(),.048*t.scale],r:new THREE.Euler().setFromQuaternion(q).toArray().slice(0,3),c:'#594330'})
+        }
+      } else {
+        // Avicennia / Sonneratia: breathing roots around the crown footprint.
+        const count=kind===1?18:12
+        for(let i=0;i<count;i++) {
+          const angle=a+i*2.399, radius=(.55+(i%5)*.24)*t.scale
+          const height=(kind===1?.22:.31)*t.scale*(.75+(i%4)*.08)
+          pneumatophores.push({p:[t.x+Math.cos(angle)*radius,y+height*.5,t.z+Math.sin(angle)*radius],s:[.025*t.scale,height,.025*t.scale],r:[0,angle,0],c:kind===1?'#8d897b':'#6b5442'})
+        }
+        if(kind===2) {
+          for(let i=0;i<5;i++) {
+            const angle=a+i*Math.PI*2/5, radius=.62*t.scale
+            const start=new THREE.Vector3(t.x+Math.cos(angle)*radius,y+.03,t.z+Math.sin(angle)*radius)
+            const end=new THREE.Vector3(t.x,y+.72*t.scale,t.z), v=end.clone().sub(start)
+            const q=new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0),v.clone().normalize())
+            roots.push({p:start.add(end).multiplyScalar(.5).toArray(),s:[.07*t.scale,v.length(),.045*t.scale],r:new THREE.Euler().setFromQuaternion(q).toArray().slice(0,3),c:bark})
+          }
+        }
       }
-      for(let i=0;i<5;i++) {
-        const angle=a+i*1.256, r=(i===0?.4:1.6)*t.scale
-        crowns.push({p:[t.x+Math.cos(angle)*r,y+h+(i%2)*.65,t.z+Math.sin(angle)*r],s:[1.65*t.scale,.85*t.scale,1.45*t.scale],r:[0,angle,.1],c:['#567546','#3d6540','#6f8950'][i%3]})
-        const start=new THREE.Vector3(t.x,y+h*.7,t.z), end=new THREE.Vector3(t.x+Math.cos(angle)*r,y+h,t.z+Math.sin(angle)*r),v=end.clone().sub(start)
-        const q=new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0),v.clone().normalize())
-        branches.push({p:start.add(end).multiplyScalar(.5).toArray(),s:[.085*t.scale,v.length(),.085*t.scale],r:new THREE.Euler().setFromQuaternion(q).toArray().slice(0,3)})
+
+      const branchCount=kind===2?8:kind===1?7:6
+      for(let i=0;i<branchCount;i++) {
+        const angle=a+i*Math.PI*2/branchCount, reach=(kind===2?1.75:kind===1?1.4:1.55)*t.scale*(.83+(i%3)*.1)
+        const start=new THREE.Vector3(t.x,y+h*(.58+(i%2)*.045),t.z)
+        const end=new THREE.Vector3(t.x+Math.cos(angle)*reach,y+h*(.83+(i%3)*.035),t.z+Math.sin(angle)*reach)
+        const v=end.clone().sub(start), q=new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0,1,0),v.clone().normalize())
+        branches.push({p:start.add(end).multiplyScalar(.5).toArray(),s:[.065*t.scale,v.length(),.065*t.scale],r:new THREE.Euler().setFromQuaternion(q).toArray().slice(0,3),c:bark})
+
+        const clusters=kind===1?1:2
+        for(let j=0;j<clusters;j++) {
+          const offset=(j-.35)*.42*t.scale
+          crowns.push({
+            p:[end.x+Math.cos(angle+1.45)*offset,end.y+.18*(j%2)*t.scale,end.z+Math.sin(angle+1.45)*offset],
+            s:[(kind===2?1.02:.82)*t.scale,(kind===1?.46:.56)*t.scale,(kind===2?.82:.7)*t.scale],
+            r:[.08*Math.sin(i),angle,.05*Math.cos(i)],c:leaves[(i+j)%leaves.length]
+          })
+        }
+      }
+      // Smaller top clusters break the spherical silhouette and read more like real foliage.
+      for(let i=0;i<4;i++) {
+        const angle=a+i*Math.PI*.5
+        crowns.push({p:[t.x+Math.cos(angle)*.55*t.scale,y+h+.1*t.scale,t.z+Math.sin(angle)*.55*t.scale],
+          s:[.72*t.scale,.48*t.scale,.62*t.scale],r:[0,angle,.08],c:leaves[(i+1)%leaves.length]})
       }
     }
-    this.instances(this.g.trunk,trunks,this.m.bark); this.instances(this.g.trunk,roots,this.m.bark); this.instances(this.g.trunk,branches,this.m.bark)
-    this.instances(this.g.sphere,crowns,this.mat('#ffffff'))
+    const white=this.mat('#ffffff')
+    this.instances(this.g.trunk,trunks,white); this.instances(this.g.trunk,upperTrunks,white)
+    this.instances(this.g.trunk,roots,white); this.instances(this.g.blade,pneumatophores,white)
+    this.instances(this.g.trunk,branches,white); this.instances(this.g.leaf,crowns,white)
   }
   text(text, position, width=3, parent=this.scene) {
     const canvas=document.createElement('canvas'); canvas.width=512; canvas.height=128
@@ -148,15 +199,55 @@ export class RangerWorld {
     this.box([STATION.x,y+1.14,STATION.z+.045],[.53,.4,.02],this.mat('#70c5ad',{emissive:'#56b6a0',emissiveIntensity:.4}))
     this.text('MRV • BASE CAMP',[STATION.x,2.9,STATION.z],2.6)
   }
+  buildEconomy() {
+    const makeStall=(center,label,roofColor)=>{
+      const y=floorHeight(center.x,center.z), g=new THREE.Group();g.position.set(center.x,y,center.z);this.scene.add(g)
+      this.box([0,.5,0],[3,.16,1.7],this.m.wood,g)
+      for(const x of [-1.25,1.25]) for(const z of [-.65,.65]) this.beam([x,.05,z],[x,2.35,z],.055,this.m.wood,g)
+      const roof=this.box([0,2.45,0],[3.45,.18,2.1],this.mat(roofColor)); roof.parent?.remove(roof); g.add(roof); roof.position.set(0,2.45,0)
+      this.text(label,[0,3.05,0],2.7,g)
+      return g
+    }
+    const workshop=makeStall(WORKSHOP,'COMMUNITY WORKSHOP','#6f8060')
+    for(let i=0;i<4;i++) this.box([-1.05+i*.7,.75,.2],[.5,.35,.65],i%2?this.m.gold:this.m.wood,workshop)
+    const market=makeStall(MARKET,'COASTAL MARKET','#a56d48')
+    for(let i=0;i<5;i++) this.mesh(this.g.sphere,this.mat(['#d38c57','#d2b96f','#708e61'][i%3]),[-1.1+i*.55,.78,.05],[.18,.12,.18],market)
+
+    for(const node of RESOURCE_NODES) {
+      const y=floorHeight(node.x,node.z), g=new THREE.Group();g.position.set(node.x,y+.04,node.z);this.scene.add(g)
+      const color=this.mat(MATERIALS[node.material].color)
+      const ring=this.mesh(this.keep(new THREE.RingGeometry(.62,.7,32)),this.mat(MATERIALS[node.material].color,{side:THREE.DoubleSide,transparent:true,opacity:.42}),[0,.02,0],[1,1,1],g)
+      ring.rotation.x=-Math.PI/2; ring.castShadow=false
+      if(node.kind==='catch') {
+        this.box([0,.24,0],[.8,.42,.62],this.m.wood,g)
+        for(const x of [-.35,.35]) this.beam([x,.04,-.25],[x,.72,.25],.025,this.m.dark,g)
+        this.mesh(this.g.sphere,color,[0,.72,0],[.18,.1,.25],g)
+      } else {
+        for(let i=0;i<5;i++) {
+          const a=i*1.256
+          this.mesh(node.material==='driftwood'?this.g.trunk:this.g.leaf,color,[Math.sin(a)*.34,.18+(i%2)*.08,Math.cos(a)*.3],
+            node.material==='driftwood'?[.08,.55,.08]:[.24,.09,.34],g).rotation.y=a
+        }
+      }
+      this.economyMarkers.push({node,group:g,ring})
+    }
+  }
   youngTree(kind) {
-    const g=new THREE.Group(), color=this.mat(SPECIES[kind].color)
-    this.beam([0,0,0],[0,1.8,0],.09,this.m.bark,g)
-    const spread=kind===2?1.15:kind===1?.7:.9
-    for(let i=0;i<5;i++) {
-      const a=i*1.256
-      this.mesh(this.g.leaf,color,[Math.sin(a)*spread*.45,1.55+(i%2)*.35,Math.cos(a)*spread*.45],[spread*.7,kind===1?.7:.4,spread*.6],g)
-      if(kind===0) this.beam([Math.sin(a)*.55,0,Math.cos(a)*.55],[0,.65,0],.035,this.m.bark,g)
-      if(kind===1) this.beam([Math.sin(a)*.45,0,Math.cos(a)*.45],[Math.sin(a)*.45,.22,Math.cos(a)*.45],.024,this.m.bark,g)
+    const g=new THREE.Group(), leafMat=this.mat(SPECIES[kind].color)
+    const bark=kind===1?this.mat('#8f8d82'):kind===2?this.mat('#705744'):this.m.bark
+    this.beam([0,0,0],[0,1.95,0],kind===2?.11:.085,bark,g)
+    const count=kind===2?7:6
+    for(let i=0;i<count;i++) {
+      const a=i*Math.PI*2/count, reach=(kind===2?.75:kind===1?.55:.65)
+      this.beam([0,1.15+(i%2)*.14,0],[Math.sin(a)*reach,1.62+(i%3)*.12,Math.cos(a)*reach],.035,bark,g)
+      this.mesh(this.g.leaf,leafMat,[Math.sin(a)*reach,1.72+(i%3)*.12,Math.cos(a)*reach],
+        [kind===2?.58:.45,kind===1?.22:.29,kind===2?.48:.38],g).rotation.y=a
+    }
+    if(kind===0) {
+      for(let i=0;i<7;i++){const a=i*Math.PI*2/7;this.beam([Math.sin(a)*.52,.02,Math.cos(a)*.52],[0,.72+(i%2)*.14,0],.027,bark,g)}
+    } else {
+      const roots=kind===1?11:7
+      for(let i=0;i<roots;i++){const a=i*2.399,r=.35+(i%3)*.13;this.mesh(this.g.blade,bark,[Math.sin(a)*r,.1,Math.cos(a)*r],[.018,.2+(i%2)*.05,.018],g)}
     }
     return g
   }
@@ -228,6 +319,11 @@ export class RangerWorld {
     this.sun.intensity=THREE.MathUtils.damp(this.sun.intensity,storm?1.2:3.2,2,dt)
     this.motes.position.x=Math.sin(time*.08)*.5
     this.debris.forEach(t=>{t.group.visible=!s.cleaned.includes(t.id)})
+    this.economyMarkers.forEach((entry,i)=>{
+      const last=s.economy?.harvests?.[entry.node.id], cooling=Number.isFinite(last)&&time-last<entry.node.cooldown
+      entry.ring.material.opacity=cooling?.09:(.28+Math.sin(time*1.8+i)*.08)
+      entry.group.scale.setScalar(cooling?.82:1)
+    })
     this.plants.forEach((entry,i)=>{
       const site=s.sites[i],planted=site.plantedAt!==null
       entry.marker.visible=!planted;entry.plant.visible=planted

@@ -56,7 +56,7 @@ export const FOREST = (() => {
   return result
 })()
 export function createState() {
-  return { version: 1, time: 0, player: { x: 0, z: 12, y: floorHeight(0, 12), vy: 0, heading: 0, health: 100, stamina: 100, moving: false, grounded: true },
+  return { version: 2, time: 0, player: { x: 0, z: 12, y: floorHeight(0, 12), vy: 0, heading: 0, health: 100, stamina: 100, moving: false, grounded: true },
     selected: 0, seeds: [0, 0, 0], sites: SITES.map(p => ({ id: p.id, plantedAt: null, sampled: false, health: 100 })),
     cleaned: [], samples: 0, credits: 0, verified: false, rescues: 0, progress: 0, actionId: null, latch: false, jumpLatch: false,
     economy: createEconomy(),

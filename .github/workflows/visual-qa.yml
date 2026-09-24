@@ -1,0 +1,34 @@
+name: Visual QA
+
+on:
+  push:
+    branches:
+      - feat/gameplay-economy-and-realistic-trees
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - run: npm run build
+      - run: |
+          npm install --no-save --package-lock=false playwright@1.55.0
+          npx playwright install --with-deps chromium
+      - run: |
+          npm run preview -- --host 127.0.0.1 > /tmp/sim-ranger-preview.log 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:4173/ > /dev/null && break; sleep 1; done
+          node scripts/vnext-qa.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sim-ranger-vnext-visual-qa
+          path: vnext-artifacts/
+          retention-days: 7

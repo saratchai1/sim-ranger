@@ -1,4 +1,6 @@
 // Deterministic action-game rules; no renderer, DOM or farm-save dependencies.
+import { RESOURCE_NODES, WORKSHOP, MARKET, createEconomy, normalizeEconomy, resourceBlock, harvestResource, mudSpeedMultiplier, mudStaminaDrain } from './economy.js'
+
 export const SAVE_KEY = 'mangrove-ranger-action-v1'
 export const SPECIES = [
   { id: 'rhizophora', name: 'โกงกาง', color: '#72c86d', habitat: 'เลนริมคลอง' },
@@ -47,7 +49,7 @@ export const FOREST = (() => {
   for (let i = 0; i < 260; i++) {
     const x = -29 + rng() * 44, z = -44 + rng() * 66
     if (Math.abs(x) < 4.6 || (Math.abs(z + 18) < 4) || distance({ x, z }, CAMP) < 7) continue
-    if ([...SITES, ...CACHES, STATION].some(p => distance(p, { x, z }) < 3.4)) continue
+    if ([...SITES, ...CACHES, STATION, ...RESOURCE_NODES, WORKSHOP, MARKET].some(p => distance(p, { x, z }) < 3.4)) continue
     if (Math.abs(x + 10) < 2.2 && z < -11 && z > -26) continue
     result.push({ x, z, scale: 0.8 + rng() * 0.8, phase: rng() * 6.28, kind: i % 3, radius: 0.38 })
   }
@@ -57,19 +59,24 @@ export function createState() {
   return { version: 1, time: 0, player: { x: 0, z: 12, y: floorHeight(0, 12), vy: 0, heading: 0, health: 100, stamina: 100, moving: false, grounded: true },
     selected: 0, seeds: [0, 0, 0], sites: SITES.map(p => ({ id: p.id, plantedAt: null, sampled: false, health: 100 })),
     cleaned: [], samples: 0, credits: 0, verified: false, rescues: 0, progress: 0, actionId: null, latch: false, jumpLatch: false,
-    message: 'รับกล้าไม้จากลังทางซ้าย กด E ค้างเพื่อหยิบ', messageTime: 7 }
+    economy: createEconomy(),
+    message: 'รับกล้าไม้จากลังทางซ้าย กด E ค้างเพื่อหยิบ · กด B ดูงานชุมชน', messageTime: 7 }
 }
 export function announce(s, text) { s.message = text; s.messageTime = 5 }
 export function metrics(s) {
   const planted = s.sites.filter(p => p.plantedAt !== null).length
+  const sales = s.economy?.stats?.sold || 0
+  const gathered = (s.economy?.stats?.gathered || 0) + (s.economy?.stats?.caught || 0)
   return { planted, cleaned: s.cleaned.length, samples: s.samples,
-    biodiversity: Math.min(100, 12 + planted * 8 + s.cleaned.length * 9),
-    community: 10 + s.cleaned.length * 15 + (s.verified ? 20 : 0), resilience: planted * 14 }
+    biodiversity: Math.min(100, 12 + planted * 8 + s.cleaned.length * 9 + Math.min(8, gathered * .35)),
+    community: Math.min(100, 10 + s.cleaned.length * 15 + (s.verified ? 20 : 0) + Math.min(25, sales * 3)), resilience: planted * 14 }
 }
 export function nearestAction(s) {
   const candidates = []
   for (const cache of CACHES) candidates.push({ ...cache, kind: 'supply', title: 'รับกล้าไม้ 3 ชนิด / ฟื้นกำลัง', duration: 0.65 })
   for (const trash of TRASH) if (!s.cleaned.includes(trash.id)) candidates.push({ ...trash, kind: 'clean', title: 'เก็บอวนและขยะทะเล', duration: 1.15 })
+  for (const node of RESOURCE_NODES) candidates.push({ ...node, kind: 'harvest', title: node.action, duration: node.duration,
+    blocked: resourceBlock(s.economy, node, s.time, tide(s.time)) })
   SITES.forEach((site, i) => {
     const plot = s.sites[i]
     if (plot.plantedAt === null) {
@@ -92,7 +99,7 @@ export function nearestAction(s) {
 }
 export function objective(s) {
   const m = metrics(s)
-  if (s.verified) return { title: 'ชายฝั่งกลับมามีชีวิต', detail: 'ภารกิจสำเร็จ · สำรวจป่าต่อได้', target: STATION }
+  if (s.verified) return { title: 'เศรษฐกิจชุมชนชายฝั่ง', detail: 'จับสัตว์น้ำ เก็บวัตถุดิบ แปรรูปที่โรงชุมชน แล้วขายที่ตลาด · กด B', target: WORKSHOP }
   if (!s.seeds.some(Boolean) && m.planted < 6) return { title: 'รับกล้าไม้จากเรือนเพาะชำ', detail: 'เดินไปที่ลังสีเหลือง แล้วกด E ค้าง', target: CACHES.reduce((a,b) => distance(a,s.player) < distance(b,s.player) ? a : b) }
   const next = SITES.find((p, i) => s.sites[i].plantedAt === null)
   if (next) return { title: `ฟื้นฟูป่า ${m.planted}/6 จุด`, detail: `${next.name} · ใช้${SPECIES[next.species].name}`, target: next }
@@ -106,6 +113,11 @@ export function perform(s, target) {
   if (!live || live.id !== target.id || live.kind !== target.kind || live.blocked) return false
   if (live.kind === 'supply') { s.seeds = [3, 3, 3]; s.player.health = 100; s.player.stamina = 100; announce(s, 'พร้อมลุย · กล้าไม้เต็มกระเป๋าและฟื้นกำลังแล้ว') }
   if (live.kind === 'clean') { s.cleaned.push(live.id); announce(s, 'เก็บขยะแล้ว · คืนพื้นที่อนุบาลสัตว์น้ำ +9 ธรรมชาติ') }
+  if (live.kind === 'harvest') {
+    const result = harvestResource(s.economy, live, s.time, tide(s.time))
+    if (!result.ok) return false
+    announce(s, result.message)
+  }
   if (live.kind === 'plant') {
     const i = SITES.findIndex(p => p.id === live.id)
     s.seeds[s.selected]--; s.sites[i].plantedAt = s.time
@@ -139,7 +151,7 @@ export function step(s, input = {}, dt = 1 / 60, yaw = 0) {
   const mud = distance(p, MUD) < MUD.radius
   const depth = Math.max(0, tide(s.time) - floor)
   const sprint = input.sprint && moving && p.stamina > 5 && depth < 0.3 && !mud
-  const speed = (sprint ? 6 : 3.2) * (mud ? 0.42 : 1) * (depth > 0.25 ? 0.5 : 1)
+  const speed = (sprint ? 6 : 3.2) * (mud ? mudSpeedMultiplier(s.economy) : 1) * (depth > 0.25 ? 0.5 : 1)
   if (input.jump && !s.jumpLatch && p.grounded && p.stamina >= 12) { p.vy = 6.5; p.grounded = false; p.stamina -= 12 }
   s.jumpLatch = Boolean(input.jump)
   p.vy -= 19 * dt; p.y += p.vy * dt
@@ -154,7 +166,7 @@ export function step(s, input = {}, dt = 1 / 60, yaw = 0) {
   const newFloor = floorHeight(p.x, p.z)
   if (p.y <= newFloor) { p.y = newFloor; p.vy = 0; p.grounded = true }
   p.moving = moving; p.sprinting = Boolean(sprint)
-  p.stamina = clamp(p.stamina + dt * (sprint ? -17 : moving && mud ? -7 : depth > 0.75 ? -9 : 13), 0, 100)
+  p.stamina = clamp(p.stamina + dt * (sprint ? -17 : moving && mud ? -mudStaminaDrain(s.economy) : depth > 0.75 ? -9 : 13), 0, 100)
   const sheltered = inShelter(p), storm = isStorm(s.time)
   if (storm && !sheltered) p.stamina = Math.max(0, p.stamina - dt * 8)
   if (depth > 1.35 || (depth > 0.7 && p.stamina < 1) || (storm && !sheltered && p.stamina < 1)) p.health -= dt * 9
@@ -171,13 +183,13 @@ export function step(s, input = {}, dt = 1 / 60, yaw = 0) {
   p.hazard = depth > 0.7 ? 'น้ำลึก · กลับที่ดอนหรือใช้สะพาน' : mud ? 'โคลนลึก · เดินช้าและเสียกำลัง' : storm && !sheltered ? 'พายุเข้า · หาที่กำบัง' : null
 }
 export function serialize(s) {
-  return JSON.stringify({ version: 1, time: s.time, player: s.player, selected: s.selected, seeds: s.seeds, sites: s.sites, cleaned: s.cleaned, samples: s.samples, verified: s.verified, credits: s.credits, rescues: s.rescues })
+  return JSON.stringify({ version: 2, time: s.time, player: s.player, selected: s.selected, seeds: s.seeds, sites: s.sites, cleaned: s.cleaned, samples: s.samples, verified: s.verified, credits: s.credits, rescues: s.rescues, economy: s.economy })
 }
 export function restore(raw) {
   const fresh = createState()
   try {
     const saved = JSON.parse(raw)
-    if (saved?.version !== 1 || !Array.isArray(saved.sites) || saved.sites.length !== 6) return fresh
+    if (![1,2].includes(saved?.version) || !Array.isArray(saved.sites) || saved.sites.length !== 6) return fresh
     const finite = (v, fallback, a, b) => Number.isFinite(v) ? clamp(v, a, b) : fallback
     fresh.time = finite(saved.time, 0, 0, 1e8)
     fresh.selected = Math.floor(finite(saved.selected, 0, 0, 2))
@@ -190,6 +202,7 @@ export function restore(raw) {
     fresh.verified = saved.verified === true && fresh.sites.every(p => p.plantedAt !== null) && fresh.cleaned.length === 3 && fresh.samples >= 3
     fresh.credits = fresh.verified ? 6 : 0
     fresh.rescues = Math.floor(finite(saved.rescues, 0, 0, 9999))
+    fresh.economy = normalizeEconomy(saved.economy)
     fresh.player.x = finite(saved.player?.x, 0, -30, 28)
     fresh.player.z = finite(saved.player?.z, 12, -44, 24)
     fresh.player.y = floorHeight(fresh.player.x, fresh.player.z)

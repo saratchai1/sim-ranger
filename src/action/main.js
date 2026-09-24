@@ -1,16 +1,19 @@
 import './ranger.css'
 import './wardrobe.css'
+import './economy.css'
 import { RangerWardrobe, slotIcon } from './wardrobe.js'
+import { EconomyPanel } from './economy-ui.js'
 import { loadAppearance, loadSavedLooks, saveAppearance } from './appearance.js'
 import { RangerWorld } from './world.js'
 import { SAVE_KEY, SPECIES, SITES, TRASH, CACHES, STATION, FOREST, CAMP, createState, restore, serialize, step, metrics, objective, nearestAction, tide, isStorm, distance, rescue, clamp } from './simulation.js'
+import { RESOURCE_NODES, WORKSHOP, MARKET } from './economy.js'
 
 const $ = (selector) => document.querySelector(selector)
 const host = $('#ranger-world')
 let game
 try { game = restore(localStorage.getItem(SAVE_KEY)) } catch { game = createState() }
 let paused = true, started = false, completionSeen = game.verified, raf = 0, last = 0, accumulator = 0, hudTime = 0, saveTime = 0
-let world = null, wardrobe = null, dressing = false, lockerWasPaused = true
+let world = null, wardrobe = null, dressing = false, lockerWasPaused = true, economyPanel = null, trading = false, economyWasPaused = true
 const camera = { yaw: 0, pitch: 0.31, distance: 7 }
 const keys = new Set(), touch = { x: 0, z: 0, jump: false, sprint: false, interact: false }
 let lookPointer = null, stickPointer = null
@@ -30,9 +33,9 @@ function release() {
   $('#stick-knob').style.transform = 'translate(0,0)'
 }
 function setPaused(value) {
-  if (dressing && !value) return
+  if ((dressing || trading) && !value) return
   paused = value; release(); accumulator = 0
-  $('#pause-screen').hidden = !value || !started || !$('#completion').hidden || dressing
+  $('#pause-screen').hidden = !value || !started || !$('#completion').hidden || dressing || trading
   if(value && document.pointerLockElement) document.exitPointerLock()
   if(value && started) save()
   // Explicit resume owns a fresh request; a suspended callback may have been
@@ -59,6 +62,23 @@ function openWardrobe() {
   })
   wardrobe.open(loadAppearance(), loadSavedLooks())
 }
+function openEconomy() {
+  if (!world || !started || dressing || trading || !$('#completion').hidden) return
+  economyWasPaused = paused; trading = true; setPaused(true)
+  economyPanel ??= new EconomyPanel({
+    onChanged(result) {
+      game.message = result.message; game.messageTime = 5
+      if (result.ok) save()
+      updateHUD()
+    },
+    onClose() {
+      trading = false
+      setPaused(economyWasPaused)
+      if (!economyWasPaused) host.focus()
+    },
+  })
+  economyPanel.open(game)
+}
 function start() {
   $('#intro').hidden = true; started = true; setPaused(false); save(); host.focus()
 }
@@ -74,6 +94,7 @@ $('#inventory').innerHTML = SPECIES.map((s,i) => `<button class="seed-slot" data
 for(const button of document.querySelectorAll('[data-seed]')) on(button,'click',()=>select(Number(button.dataset.seed)))
 $('#wardrobe-open').innerHTML = `${slotIcon('outer')}<span>แต่งตัว</span><kbd>C</kbd>`
 on($('#wardrobe-open'),'click',openWardrobe)
+on($('#economy-open'),'click',openEconomy)
 on($('#wardrobe-pause'),'click',openWardrobe)
 on($('#start'),'click',start)
 on($('#pause'),'click',()=>setPaused(true))
@@ -94,6 +115,11 @@ on(window,'keydown',e=>{
     if(e.code==='Escape'&&!e.repeat) {e.preventDefault(); wardrobe.cancel()}
     return
   }
+  if (trading) {
+    if((e.code==='Escape'||e.code==='KeyB')&&!e.repeat) {e.preventDefault(); economyPanel.close()}
+    return
+  }
+  if(e.code==='KeyB' && started) {if(!e.repeat){e.preventDefault();openEconomy()}return}
   if(e.code==='KeyC' && started) {if(!e.repeat){e.preventDefault();openWardrobe()}return}
   if(['KeyW','KeyA','KeyS','KeyD','Space','KeyE','ShiftLeft','ShiftRight','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault()
   if(e.code==='Escape' && started && $('#completion').hidden) { if(!e.repeat) setPaused(!paused); return }
@@ -140,6 +166,8 @@ function drawMap() {
   const mark=(p,color,r)=>{const[x,y]=map(p.x,p.z);ctx.fillStyle=color;ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill()}
   SITES.forEach((p,i)=>mark(p,game.sites[i].plantedAt!==null?'#98dfbd':'#dcc898',3.2))
   for(const c of CACHES) mark(c,'#dba35e',2.5)
+  for(const node of RESOURCE_NODES) mark(node,node.kind==='catch'?'#66b7ba':'#8bae68',2.1)
+  mark(WORKSHOP,'#d99b58',3); mark(MARKET,'#ebcf73',3)
   mark(STATION,'#f4eccd',3)
   const target=objective(game).target,[tx,ty]=map(target.x,target.z);ctx.strokeStyle='#efd08c';ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(tx,ty,6,0,Math.PI*2);ctx.stroke()
   const[x,y]=map(game.player.x,game.player.z);ctx.save();ctx.translate(x,y);ctx.rotate(-game.player.heading);ctx.fillStyle='#fffde9';ctx.beginPath();ctx.moveTo(0,-6);ctx.lineTo(-3.5,4);ctx.lineTo(3.5,4);ctx.closePath();ctx.fill();ctx.restore()
@@ -157,6 +185,7 @@ function updateHUD() {
   $('#plant-count').textContent=`${m.planted}/6`;$('#trash-count').textContent=`${m.cleaned}/3`;$('#sample-count').textContent=`${m.samples}/3`
   $('#biodiversity').textContent=m.biodiversity;$('#community').textContent=m.community;$('#resilience').textContent=m.resilience
   $('#credit-count').textContent=game.credits
+  $('#coin-count').textContent=game.economy.coins; $('#coin-mini').textContent=game.economy.coins
   $('#weather').textContent=isStorm(game.time)?'พายุชายฝั่ง':game.time%160>88?'พายุกำลังใกล้เข้ามา':'อากาศเปิด'
   $('#tide').textContent=tide(game.time)>.6?'น้ำขึ้นสูง':tide(game.time)>.38?'น้ำกำลังเปลี่ยนระดับ':'น้ำลง'
   $('#hazard').hidden=!p.hazard;$('#hazard').textContent=p.hazard||''
@@ -172,6 +201,7 @@ function updateHUD() {
   $('#notice').hidden=game.messageTime<=0;$('#notice').textContent=game.message
   document.querySelectorAll('[data-seed]').forEach(b=>{const i=Number(b.dataset.seed);b.classList.toggle('selected',i===game.selected);b.setAttribute('aria-pressed',String(i===game.selected))})
   game.seeds.forEach((n,i)=>$(`[data-count="${i}"]`).textContent=`${n} กล้า`)
+  if(trading) economyPanel?.render(game)
   drawMap()
 }
 function animate(ms) {
@@ -204,12 +234,14 @@ try {
 // Pause/save now, but keep the renderer and handlers alive until truly discarded.
 on(window,'pagehide',event=>{
   if(dressing) lockerWasPaused=true
+  if(trading) economyWasPaused=true
   if(started) setPaused(true)
   else release()
   cancelAnimationFrame(raf); raf=0; last=0; accumulator=0
   if(event.persisted) return
   listeners.splice(0).forEach(remove=>remove())
   wardrobe?.dispose();wardrobe=null
+  economyPanel?.dispose();economyPanel=null
   world?.dispose(); world=null
 })
 on(window,'pageshow',event=>{
